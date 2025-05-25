@@ -203,24 +203,38 @@ class MagicGA:
     def _show(self, chrom: list[int], gen: int) -> None:
         if not self.cfg.plot:
             return
-        if self._fig is None:
-            self._fig = plt.figure(figsize=(6, 6))
-        plt.clf()
+
         n = self.cfg.order
         board = np.asarray(chrom).reshape(n, n)
-        norm     = board.astype(float) / (n * n)
-        colours  = plt.cm.YlGnBu(norm)
 
-        tbl = plt.table(cellText=board,
-                        cellColours=colours,
-                        cellLoc="center",
-                        loc="center",
-                        colWidths=[0.12] * n)
-        tbl.auto_set_font_size(False)
-        tbl.set_fontsize(12)
-        plt.title(f"Generation {gen} | Fitness {self.evaluate(chrom)}")
-        plt.axis("off")
+        # Normalize values between 0 and 1 for colormap
+        norm = board.astype(float) / (n * n)
+
+        # Custom brighter colormap (avoiding dark colors)
+        from matplotlib.colors import LinearSegmentedColormap
+        bright_cmap = LinearSegmentedColormap.from_list("bright", ["#fffae5", "#ffd07a", "#ffad33", "#ff8800"])
+
+        if self._fig is None:
+            self._fig, self._ax = plt.subplots(figsize=(n, n))
+        self._ax.clear()
+
+        # Draw cells with colored background
+        for i in range(n):
+            for j in range(n):
+                color = bright_cmap(norm[i, j])
+                self._ax.add_patch(plt.Rectangle((j, n - 1 - i), 1, 1, color=color, ec="black", lw=1.5))
+                self._ax.text(j + 0.5, n - 1 - i + 0.5, str(board[i, j]),
+                            va="center", ha="center", fontsize=16, weight="bold", color="black")
+
+        self._ax.set_xlim(0, n)
+        self._ax.set_ylim(0, n)
+        self._ax.set_aspect("equal")
+        self._ax.axis("off")
+
+        self._ax.set_title(f"Generation {gen} | Fitness {self.evaluate(chrom)}", fontsize=14)
+        plt.tight_layout()
         plt.pause(0.001)
+
 
     # ---------- Evolution loop ------------------------------------------- #
     def run(self) -> list[int]:
