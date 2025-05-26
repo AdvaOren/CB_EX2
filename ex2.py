@@ -26,42 +26,25 @@ import pandas as pd
 # --------------------------------------------------------------------------- #
 @dataclass
 class GAConfig:
-    order: int = 3                    # magic-square size N
-    generations: int = 200            # number of GA iterations
+    order: int = 3                      # magic-square size N
+    generations: int = 200              # number of GA iterations
     pop_size: int = 100
     elite_frac: float = 0.20
     mut_rate: float = 0.85
     stagnation_patience: int = 6
-    strong_mut_every: int = 2         # generations of stagnation before strong mut.
+    strong_mut_every: int = 2           # generations of stagnation before strong mut.
     strong_mut_rate: float = 0.90
     strong_mut_count: int = 5
-    mode: str = "classic"          # classic | darwin | lamarck
-    perfect: bool = True           # True → most-perfect; False → ordinary
+    mode: str = "classic"           # classic | darwin | lamarck
+    perfect: bool = True            # True → most-perfect; False → ordinary
     plot: bool = True
-
-# --------------------------------------------------------------------------- #
-#  Validation functions
-# --------------------------------------------------------------------------- #
-def validate_perfect_square_order(n: int) -> tuple[bool, str]:
-    """
-    Validate if order n is suitable for perfect magic squares.
-    Returns (is_valid, error_message)
-    """
-    if n < 3:
-        return False, "Order must be at least 3"
-    
-    # Perfect magic squares work best with multiples of 4
-    if n % 4 != 0:
-        return False, f"Perfect magic squares require order to be a multiple of 4 (got {n})"
-    
-    return True, ""
 
 # --------------------------------------------------------------------------- #
 #  Deterministic builders for *ordinary* magic squares
 # --------------------------------------------------------------------------- #
 def deterministic_magic(n: int) -> np.ndarray:
     """Return an *ordinary* magic square of order n (n ≥ 3)."""
-    if n % 2 == 1:                                  # --- odd -------------
+    if n % 2 == 1:                                # --- odd -------------
         m = np.zeros((n, n), dtype=int)
         i, j = 0, n // 2
         for k in range(1, n * n + 1):
@@ -92,8 +75,8 @@ def deterministic_magic(n: int) -> np.ndarray:
         cols = list(range(k)) + list(range(n - k + 1, n))
         extra = [k]
 
-        m[:, cols] = m[:, cols][[1, 0, 3, 2]]        # swap blocks A↔D, B↔C
-        m[:, extra] = m[:, extra][[3, 2, 1, 0]]       # special central col
+        m[:, cols] = m[:, cols][[1, 0, 3, 2]]      # swap blocks A↔D, B↔C
+        m[:, extra] = m[:, extra][[3, 2, 1, 0]]     # special central col
         return m
 
 
@@ -102,12 +85,6 @@ def deterministic_magic(n: int) -> np.ndarray:
 # --------------------------------------------------------------------------- #
 class MagicGA:
     def __init__(self, cfg: GAConfig) -> None:
-        # Validate configuration for perfect squares
-        if cfg.perfect:
-            is_valid, error_msg = validate_perfect_square_order(cfg.order)
-            if not is_valid:
-                raise ValueError(f"Invalid configuration for perfect magic square: {error_msg}")
-        
         self.cfg = cfg
         self.target = self.magic_constant(cfg.order)
         self.population = [self._spawn_individual() for _ in range(cfg.pop_size)]
@@ -131,43 +108,26 @@ class MagicGA:
         board = np.asarray(chrom).reshape(n, n)
         tgt = self.target
 
-        # Basic magic square constraints (for both ordinary and perfect)
-        score  = np.abs(board.sum(1) - tgt).sum()  # rows
-        score += np.abs(board.sum(0) - tgt).sum()  # columns  
-        score += abs(board.trace() - tgt)          # main diagonal
-        score += abs(np.fliplr(board).trace() - tgt)  # anti-diagonal
+        # Base score: row / col / main diag sums (required for *any* magic square)
+        score  = np.abs(board.sum(1) - tgt).sum()
+        score += np.abs(board.sum(0) - tgt).sum()
+        score += abs(board.trace() - tgt)
+        score += abs(np.fliplr(board).trace() - tgt)
 
-        # Additional constraints only for *perfect* squares
-        if self.cfg.perfect:
-            # Constraint 1: Opposite corners sum to n²+1
+        # Extra constraints only for *perfect* squares
+        if self.cfg.perfect: # THIS IS THE KEY CHECK
             half = n // 2
             r = np.arange(half)[:, None]
             c = np.arange(n)
+            # Check for property M (complementary pairs summing to n^2 + 1)
             score += np.abs(board[r, c] + board[-1 - r, -1 - c] - (n**2 + 1)).sum()
             score += np.abs(board[r, -1 - c] + board[-1 - r, c] - (n**2 + 1)).sum()
 
-            # Constraint 2: For even n, 2x2 blocks sum to magic constant
             if n % 2 == 0:
-                for i in range(0, n, 2):
-                    for j in range(0, n, 2):
-                        block_sum = (board[i, j] + board[i, j+1] + 
-                                   board[i+1, j] + board[i+1, j+1])
-                        score += abs(block_sum - tgt)
-            
-            # Constraint 3: Bent diagonals (for odd n >= 5)
-            if n % 2 == 1 and n >= 5:
-                # Example bent diagonals - you can add more
-                bent_sum1 = sum(board[i, (i + n//2) % n] for i in range(n))
-                bent_sum2 = sum(board[i, (i - n//2) % n] for i in range(n))
-                score += abs(bent_sum1 - tgt) + abs(bent_sum2 - tgt)
-            
-            # Constraint 4: Center symmetry for all pairs
-            for i in range(n):
-                for j in range(n):
-                    opposite_i, opposite_j = n - 1 - i, n - 1 - j
-                    if i < opposite_i or (i == opposite_i and j < opposite_j):
-                        pair_sum = board[i, j] + board[opposite_i, opposite_j]
-                        score += abs(pair_sum - (n**2 + 1))
+                # Check for 2x2 sub-square sums for doubly-even perfect squares
+                s = (board[:-1:2, :-1:2] + board[1::2, :-1:2] +
+                     board[:-1:2, 1::2] + board[1::2, 1::2])
+                score += np.abs(s - tgt).sum()
 
         return int(score)
 
@@ -187,8 +147,8 @@ class MagicGA:
         return child
 
     def _jiggle(self, chrom: list[int],
-                rate: float | None = None,
-                force: bool = False) -> list[int]:
+                 rate: float | None = None,
+                 force: bool = False) -> list[int]:
         """Return mutated individual (in-place)."""
         p = self.cfg.mut_rate if rate is None else rate
         if random.random() > p and not force:
@@ -224,59 +184,74 @@ class MagicGA:
         best = board.copy()
         best_fit = self.evaluate(best.ravel().tolist())
 
-        for _ in range(n):
+        # This hill climbing is specifically designed to swap elements
+        # within rows/cols to fix sum errors. It might be too aggressive
+        # or not general enough for ordinary squares if they don't have
+        # certain properties that make these swaps effective.
+        # For a general GA, simple random swaps or more complex local searches
+        # might be needed, or ensure the GA's own mutation is strong enough.
+        # For simplicity, we'll keep it as is, but be aware it's geared towards
+        # improving sums by local swaps.
+        for _ in range(n): # Iterate n times to try and improve
             row_err = np.abs(best.sum(1) - self.target)
             col_err = np.abs(best.sum(0) - self.target)
-            r1, r2 = row_err.argsort()[-2:]
-            c1, c2 = col_err.argsort()[-2:]
 
-            if (r1, c1) == (r2, c2):
-                continue
+            # Find the two rows/cols with largest errors
+            # We take the top two, ensuring we don't pick the same index twice if n=1
+            r_indices = row_err.argsort()
+            c_indices = col_err.argsort()
 
-            test = best.copy()
-            test[r1, c1], test[r2, c2] = test[r2, c2], test[r1, c1]
-            f = self.evaluate(test.ravel().tolist())
-            if f < best_fit:
-                best, best_fit = test, f
+            # Attempt swaps between cells in rows/cols with high errors
+            # This is a heuristic; more sophisticated hill climbing would explore more neighbors.
+            improved_this_iteration = False
+            for r1_idx in r_indices[::-1]: # Iterate from highest error rows
+                for r2_idx in r_indices[::-1]:
+                    if r1_idx == r2_idx: continue
+                    for c1_idx in c_indices[::-1]: # Iterate from highest error cols
+                        for c2_idx in c_indices[::-1]:
+                            if c1_idx == c2_idx: continue
+
+                            test = best.copy()
+                            # Swap elements at (r1, c1) and (r2, c2)
+                            test[r1_idx, c1_idx], test[r2_idx, c2_idx] = test[r2_idx, c2_idx], test[r1_idx, c1_idx]
+                            f = self.evaluate(test.ravel().tolist())
+                            if f < best_fit:
+                                best, best_fit = test, f
+                                improved_this_iteration = True
+                                # If an improvement is found, restart search for this iteration
+                                # or simply break and let the next iteration try again
+                                break
+                        if improved_this_iteration: break
+                    if improved_this_iteration: break
+                if improved_this_iteration: break
+            if not improved_this_iteration and _ > 0: # If no improvement in an iteration, can break early
+                break
 
         return best.ravel().tolist()
+
 
     # ---------- Visual ---------------------------------------------------- #
     def _show(self, chrom: list[int], gen: int) -> None:
         if not self.cfg.plot:
             return
-
+        if self._fig is None:
+            self._fig = plt.figure(figsize=(6, 6))
+        plt.clf()
         n = self.cfg.order
         board = np.asarray(chrom).reshape(n, n)
+        norm     = board.astype(float) / (n * n)
+        colours  = plt.cm.YlGnBu(norm)
 
-        # Normalize values between 0 and 1 for colormap
-        norm = board.astype(float) / (n * n)
-
-        # Custom brighter colormap (avoiding dark colors)
-        from matplotlib.colors import LinearSegmentedColormap
-        bright_cmap = LinearSegmentedColormap.from_list("bright", ["#fffae5", "#ffd07a", "#ffad33", "#ff8800"])
-
-        if self._fig is None:
-            self._fig, self._ax = plt.subplots(figsize=(n, n))
-        self._ax.clear()
-
-        # Draw cells with colored background
-        for i in range(n):
-            for j in range(n):
-                color = bright_cmap(norm[i, j])
-                self._ax.add_patch(plt.Rectangle((j, n - 1 - i), 1, 1, color=color, ec="black", lw=1.5))
-                self._ax.text(j + 0.5, n - 1 - i + 0.5, str(board[i, j]),
-                            va="center", ha="center", fontsize=16, weight="bold", color="black")
-
-        self._ax.set_xlim(0, n)
-        self._ax.set_ylim(0, n)
-        self._ax.set_aspect("equal")
-        self._ax.axis("off")
-
-        self._ax.set_title(f"Generation {gen} | Fitness {self.evaluate(chrom)}", fontsize=14)
-        plt.tight_layout()
+        tbl = plt.table(cellText=board,
+                        cellColours=colours,
+                        cellLoc="center",
+                        loc="center",
+                        colWidths=[0.12] * n)
+        tbl.auto_set_font_size(False)
+        tbl.set_fontsize(12)
+        plt.title(f"Generation {gen} | Fitness {self.evaluate(chrom)}") # Evaluate with current cfg
+        plt.axis("off")
         plt.pause(0.001)
-
 
     # ---------- Evolution loop ------------------------------------------- #
     def run(self) -> list[int]:
@@ -284,29 +259,18 @@ class MagicGA:
         patience_ctr = 0
         strong_ctr = 0
         best_fit_hist: List[int] = []
-        
-        # ---------- Different approaches for ordinary vs perfect squares ---- #
-        if not self.cfg.perfect:
-            print("🎯 Solving ORDINARY magic square (basic constraints only)...")
-            print("   - Rows, columns, and diagonals must sum to magic constant")
-        else:
-            print("🌟 Solving PERFECT magic square (extensive constraints)...")
-            print("   - All ordinary constraints PLUS:")
-            print("   - Opposite corners sum to n²+1")
-            print("   - 2×2 blocks sum to magic constant (even n)")
-            print("   - Bent diagonals sum to magic constant (odd n)")
-            print("   - Perfect center symmetry for all pairs")
-        
-        # ---------- Main GA loop ------------------------------------------- #
+
+        # Removed the deterministic early exit. The GA will now always run.
+
         for g in range(cfg.generations):
             # optional local search
-            if cfg.mode in ("darwin", "lamarck"):
+            if cfg.mode in ("darwin", "lamarck"): # Only these modes use hill_climb
                 new_pop = []
                 for indiv in self.population:
                     refined = self._hill_climb(indiv)
-                    if cfg.mode == "lamarck":          # inherit improvement
+                    if cfg.mode == "lamarck":
                         new_pop.append(refined)
-                    else:                              # Darwin – keep genotype
+                    else:
                         new_pop.append(indiv)
                 self.population = new_pop
 
@@ -318,21 +282,10 @@ class MagicGA:
             self._show(best, g)
 
             if best_fit == 0:
-                square_type = "PERFECT" if cfg.perfect else "ORDINARY"
-                print(f"🎉 SUCCESS! Valid {square_type} magic square found in {g+1} generations!")
-                
-                # Verify the solution
-                board = np.asarray(best).reshape(cfg.order, cfg.order)
-                print(f"\n📊 Solution verification:")
-                print(f"   Magic constant: {self.target}")
-                print(f"   Row sums: {board.sum(1).tolist()}")
-                print(f"   Col sums: {board.sum(0).tolist()}")
-                print(f"   Main diagonal: {board.trace()}")
-                print(f"   Anti-diagonal: {np.fliplr(board).trace()}")
-                
-                if cfg.perfect:
-                    print(f"   Perfect square constraints also satisfied! ✨")
-                
+                # This message is now more general, as it applies to both
+                # ordinary (if perfect=False) and perfect (if perfect=True) squares.
+                square_type = "Most-perfect" if cfg.perfect else "Ordinary"
+                print(f"✨ {square_type} square found in {g} generations")
                 break
 
             # stagnation?
@@ -365,15 +318,6 @@ class MagicGA:
                 next_gen.append(child)
 
             self.population = next_gen
-        
-        else:
-            # If we didn't break out of the loop (didn't find perfect solution)
-            square_type = "PERFECT" if cfg.perfect else "ORDINARY"
-            print(f"\n⏱️  GA completed {cfg.generations} generations without finding perfect {square_type} square.")
-            print(f"Best fitness achieved: {best_fit} (lower is better, 0 = perfect)")
-            
-            if best_fit > 0:
-                print(f"💡 Tip: Try increasing generations, population size, or mutation rate")
 
         # final board
         if cfg.plot:
@@ -386,35 +330,29 @@ class MagicGA:
     @staticmethod
     def benchmark(ns: list[int], cfg: GAConfig, runs: int = 5) -> pd.DataFrame:
         rows = []
+        # Define the modes to benchmark, including a specific entry for ordinary GA
+        benchmark_modes = [
+            ("classic", False), # Ordinary magic square using GA
+            ("classic", True),  # Perfect magic square using classic GA
+            ("darwin", True),
+            ("lamarck", True),
+        ]
+
         for n in ns:
-            # Validate n for perfect squares
-            if cfg.perfect:
-                is_valid, error_msg = validate_perfect_square_order(n)
-                if not is_valid:
-                    print(f"⚠️  Skipping N={n} for perfect squares: {error_msg}")
-                    continue
-                    
-            for mode in ("classic", "darwin", "lamarck"):
+            for mode, perfect_setting in benchmark_modes:
                 times, finals = [], []
-                cfg_n = GAConfig(
-                    order=n, 
-                    mode=mode, 
-                    plot=False,
-                    generations=cfg.generations,
-                    pop_size=cfg.pop_size,
-                    perfect=cfg.perfect
-                )
+                cfg_n = cfg | GAConfig(order=n, mode=mode, plot=False, perfect=perfect_setting) # type: ignore
                 for _ in range(runs):
                     start = time.perf_counter()
                     best = MagicGA(cfg_n).run()
                     times.append(time.perf_counter() - start)
-                    finals.append(MagicGA(cfg_n).evaluate(best))
+                    finals.append(MagicGA(cfg_n).evaluate(best)) # Evaluate with the correct perfect setting
                 rows.append(dict(N=n,
-                                 Mode=mode,
-                                 AvgTime=np.mean(times),
-                                 StdTime=np.std(times),
-                                 AvgFitness=np.mean(finals),
-                                 StdFitness=np.std(finals)))
+                                  Mode=f"{mode} (Perfect={perfect_setting})", # Add perfect setting to mode label
+                                  AvgTime=np.mean(times),
+                                  StdTime=np.std(times),
+                                  AvgFitness=np.mean(finals),
+                                  StdFitness=np.std(finals)))
         df = pd.DataFrame(rows)
         df.to_csv("ga_magic_benchmark.csv", index=False)
         return df
@@ -428,27 +366,23 @@ def parse_args() -> GAConfig:
     p.add_argument("--n", type=int, default=3, help="square size (≥3)")
     p.add_argument("--gens", type=int, default=200, help="number of generations")
     p.add_argument("--mode", choices=["classic", "darwin", "lamarck"],
-                   default="classic",
-                   help="evolution variant")
+                     default="classic",
+                     help="evolution variant")
     p.add_argument("--pop", type=int, default=100, help="population size")
     p.add_argument("--no-plot", action="store_true", help="disable live plot")
-    p.add_argument("--perfect", action="store_true", help="solve perfect magic square")
+    p.add_argument("--ordinary", action="store_true",
+                     help="Solve for ordinary magic square (disables perfect constraints)")
     args = p.parse_args()
 
-    # Validate perfect square configuration
-    if args.perfect:
-        is_valid, error_msg = validate_perfect_square_order(args.n)
-        if not is_valid:
-            print(f"❌ Error: {error_msg}")
-            print("💡 For perfect magic squares, please use multiples of 4 (e.g., 4, 8, 12, 16)")
-            exit(1)
+    # Determine perfect setting based on --ordinary flag
+    perfect_setting = not args.ordinary
 
     return GAConfig(order=args.n,
-                    generations=args.gens,
-                    pop_size=args.pop,
-                    mode=args.mode,
-                    plot=not args.no_plot,
-                    perfect=args.perfect)
+                     generations=args.gens,
+                     pop_size=args.pop,
+                     mode=args.mode,
+                     perfect=perfect_setting,
+                     plot=not args.no_plot)
 
 
 def main() -> None:
@@ -457,47 +391,25 @@ def main() -> None:
     print("\nBest board:\n", np.asarray(result).reshape(cfg.order, cfg.order))
 
 # --------------------------------------------------------------------------- #
-#  Simple text-menu front-end with validation
+#  Simple text-menu front-end
 # --------------------------------------------------------------------------- #
-def get_valid_order_input(perfect_mode: bool) -> int:
-    """Get valid order input from user with appropriate validation."""
-    while True:
-        try:
-            if perfect_mode:
-                n = int(input(" Square order N (multiple of 4): "))
-                is_valid, error_msg = validate_perfect_square_order(n)
-                if not is_valid:
-                    print(f" ❌ {error_msg}")
-                    print(" 💡 Please enter a multiple of 4 (e.g., 4, 8, 12)")
-                    continue
-            else:
-                n = int(input(" Square order N (≥3): "))
-                if n < 3:
-                    print(" ❌ Order must be at least 3")
-                    continue
-            
-            return n
-            
-        except ValueError:
-            print(" ❌ Please enter a valid integer")
-
 def interactive_menu() -> None:
     """
     Console menu that wraps MagicGA.  Keeps asking until the user quits.
     """
     MODE_LABELS = {
-        "2": ("classic", True),
-        "3": ("darwin",  True),
-        "4": ("lamarck", True),
-        "1": ("classic", False)   # ordinary magic square
+        "1": ("classic", False), # Ordinary magic square (GA)
+        "2": ("classic", True),  # Perfect magic square (classic GA)
+        "3": ("darwin",  True),  # Darwinian GA (perfect)
+        "4": ("lamarck", True),  # Lamarckian GA (perfect)
     }
 
     while True:
         print("\n╔════════════════════════════════════════╗")
         print("║  MAGIC-SQUARE  SOLVER                  ║")
         print("╠════════════════════════════════════════╣")
-        print("║ 1) Standard magic square               ║")
-        print("║ 2) Perfect magic square                ║")
+        print("║ 1) Ordinary magic square (using GA)    ║") # Updated label
+        print("║ 2) Perfect magic square (classic GA)   ║")
         print("║ 3) Darwinian GA (perfect)              ║")
         print("║ 4) Lamarckian GA (perfect)             ║")
         print("║ 5) Benchmark all modes                 ║")
@@ -508,26 +420,27 @@ def interactive_menu() -> None:
         # --------------- run one GA variant ---------------- #
         if choice in MODE_LABELS:
             try:
-                algo, perfect = MODE_LABELS[choice]
-                
-                # Get valid order with appropriate validation
-                n = get_valid_order_input(perfect)
-                
-                gens = int(input(" Generations                : "))
-                pop = int(input(" Population size [100]      : ") or "100")
-                plot = input(" Show live plot? [y]/n      : ").lower().strip() != "n"
+                n = int(input(" Square order N (≥3)          : "))
+                gens = int(input(" Generations                    : "))
+                pop = int(input(" Population size [100]        : ") or "100")
+                plot = input(" Show live plot? [y]/n        : ").lower().strip() != "n"
 
+                if n < 3:
+                    print("❌ Order N must be ≥ 3 for magic squares.")
+                    continue
+
+                algo, perfect_setting = MODE_LABELS[choice]
                 cfg = GAConfig(order=n,
-                        generations=gens,
-                        pop_size=pop,
-                        mode=algo,
-                        perfect=perfect,
-                        plot=plot)
+                                generations=gens,
+                                pop_size=pop,
+                                mode=algo,
+                                perfect=perfect_setting,
+                                plot=plot)
                 start = time.perf_counter()
                 result = MagicGA(cfg).run()
                 elapsed = time.perf_counter() - start
                 print(f"\nFinished in {elapsed:.2f}s – final fitness:",
-                      MagicGA(cfg).evaluate(result))
+                      MagicGA(cfg).evaluate(result)) # Evaluate with the correct perfect setting
                 print(np.asarray(result).reshape(n, n))
 
             except ValueError:
@@ -537,34 +450,15 @@ def interactive_menu() -> None:
         # --------------- benchmark ------------------------- #
         elif choice == "5":
             try:
-                perfect = input(" Perfect squares? [y]/n     : ").lower().strip() != "n"
-                
-                if perfect:
-                    print(" 🌟 For perfect squares, only multiples of 4 are supported")
-                    print(" 💡 Example: 4,8,12 or just 4")
-                
-                ns_input = input(" N list (e.g. 3,4,5)       : ").replace(" ", "").split(",")
-                ns = [int(x) for x in ns_input if x]
-                
-                # Validate all N values for perfect squares
-                if perfect:
-                    valid_ns = []
-                    for n in ns:
-                        is_valid, error_msg = validate_perfect_square_order(n)
-                        if is_valid:
-                            valid_ns.append(n)
-                        else:
-                            print(f" ⚠️  Skipping N={n}: {error_msg}")
-                    
-                    if not valid_ns:
-                        print(" ❌ No valid orders provided for perfect squares")
-                        continue
-                    ns = valid_ns
-                
-                gens = int(input(" Generations per run        : "))
-                runs = int(input(" Runs per variant [5]       : ") or "5")
-                
-                cfg = GAConfig(generations=gens, plot=False, perfect=perfect)
+                ns = [int(x) for x in input(" N list (e.g. 3,4,5)        : ")
+                                         .replace(" ", "")
+                                         .split(",") if x]
+                gens = int(input(" Generations per run          : "))
+                runs = int(input(" Runs per variant [5]         : ") or "5")
+                # For benchmarking, we now explicitly create configs for both
+                # ordinary and perfect variants for each GA mode.
+                # The benchmark function has been updated to reflect this.
+                cfg = GAConfig(generations=gens, plot=False) # Base config for benchmark
                 df = MagicGA.benchmark(ns, cfg, runs=runs)
                 print("\nBenchmark complete – results saved to "
                       "'ga_magic_benchmark.csv'\n")
