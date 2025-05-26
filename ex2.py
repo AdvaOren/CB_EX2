@@ -143,7 +143,6 @@ class MagicGA:
         # Extra constraints for *most-perfect* squares
         if self.cfg.perfect:
         # Extra constraints only for *perfect* squares
-        if self.cfg.perfect: # THIS IS THE KEY CHECK
             half = n // 2
             r = np.arange(half)[:, None]
             c = np.arange(n)
