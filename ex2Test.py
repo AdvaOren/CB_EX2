@@ -1,540 +1,547 @@
-# import random
-# import math
-# from typing import List, Tuple
+#!/usr/bin/env python
+"""
+Genetic-algorithm solver for *ordinary* and *most-perfect* magic squares.
 
-# """
-# Genetic Algorithm Magic Square Generator (adaptive version)
-# -----------------------------------------------------------
-# * Easy mode  : ordinary magic square, any n ≥ 3
-# * Hard mode  : most–perfect magic square (n multiple of 4)
+✱ 2025-05-25 — **all modes use random initial populations**.
+   Any deterministic shortcut has been removed.
 
-# Changes requested by the user on 2025‑05‑21:
-# 1. **Adaptive mutation** – start at 0.35 and drop to 0.05 once the best
-#    fitness is very close (≤ 16 **or** < n).
-# 2. **Biased initial population** – seed ~20 % of the population with
-#    semi‑structured layouts (deterministic magic squares + light random
-#    shuffles) instead of fully random permutations.
-# """
+Running options (see `interactive_menu`):
+  1) Ordinary magic square  – GA search               (perfect=False)
+  2) Most-perfect square    – Classic GA              (mode="classic")
+  3) Most-perfect square    – Darwinian GA            (mode="darwin")
+  4) Most-perfect square    – Lamarckian GA           (mode="lamarck")
+  5) Benchmark all modes
 
-# # ---------------------------------------------------------------------
-# # Utility helpers
-# # ---------------------------------------------------------------------
+Author: rewritten for Adva, 2025-05-25
+"""
+from __future__ import annotations
 
-# def magic_sum(n: int) -> int:
-#     return n * (n * n + 1) // 2
-
-
-# def chunks(lst: List[int], n: int) -> List[List[int]]:
-#     return [lst[i : i + n] for i in range(0, len(lst), n)]
-
-
-# def square_from_perm(perm: List[int], n: int) -> List[List[int]]:
-#     return chunks(perm, n)
-
-# # ---------------------------------------------------------------------
-# # Deterministic constructors (used only to bias the population)
-# # ---------------------------------------------------------------------
-
-# def siamese_magic(n: int) -> List[int]:
-#     """Return a flattened odd‑order magic square via the Siamese method."""
-#     square = [[0] * n for _ in range(n)]
-#     num = 1
-#     i, j = 0, n // 2
-#     while num <= n * n:
-#         square[i][j] = num
-#         num += 1
-#         ni, nj = (i - 1) % n, (j + 1) % n
-#         if square[ni][nj]:
-#             i = (i + 1) % n
-#         else:
-#             i, j = ni, nj
-#     return [x for row in square for x in row]
-
-
-# def strachey_magic(n: int) -> List[int]:
-#     """Return a flattened doubly‑even (n % 4 == 0) magic square."""
-#     m = [[i * n + j + 1 for j in range(n)] for i in range(n)]
-#     for i in range(n):
-#         for j in range(n):
-#             if (i % 4 == j % 4) or ((i % 4) + (j % 4) == 3):
-#                 m[i][j] = n * n + 1 - m[i][j]
-#     return [x for row in m for x in row]
-
-
-# def biased_seeds(n: int, k: int) -> List[List[int]]:
-#     """Return up to k semi‑structured permutations to seed the GA."""
-#     seeds = []
-#     if n % 2 == 1:
-#         base = siamese_magic(n)
-#     elif n % 4 == 0:
-#         base = strachey_magic(n)
-#     else:
-#         base = list(range(1, n * n + 1))            # fallback – trivial order
-
-#     for _ in range(k):
-#         # create a lightly shuffled variant to keep diversity
-#         perm = base[:]
-#         for _ in range(n):
-#             i, j = random.sample(range(len(perm)), 2)
-#             perm[i], perm[j] = perm[j], perm[i]
-#         seeds.append(perm)
-#     return seeds
-
-# # ---------------------------------------------------------------------
-# # Fitness functions
-# # ---------------------------------------------------------------------
-
-# def fitness_standard(perm: List[int], n: int) -> int:
-#     s = magic_sum(n)
-#     sq = square_from_perm(perm, n)
-#     penalty = 0
-#     for i in range(n):
-#         penalty += abs(sum(sq[i]) - s) ** 2
-#         penalty += abs(sum(sq[j][i] for j in range(n)) - s) ** 2
-#     penalty += abs(sum(sq[i][i] for i in range(n)) - s) ** 2
-#     penalty += abs(sum(sq[i][n - 1 - i] for i in range(n)) - s) ** 2
-#     return penalty
-
-
-# def fitness_most_perfect(perm: List[int], n: int) -> int:
-#     base = fitness_standard(perm, n)
-#     sq = square_from_perm(perm, n)
-#     s = magic_sum(n)
-#     extra = 0
-#     for i in range(n - 1):
-#         for j in range(n - 1):
-#             extra += abs(
-#                 sq[i][j]
-#                 + sq[i][j + 1]
-#                 + sq[i + 1][j]
-#                 + sq[i + 1][j + 1]
-#                 - s
-#             ) ** 2
-#     target = n * n + 1
-#     for i in range(n):
-#         for j in range(n):
-#             ci, cj = n - 1 - i, n - 1 - j
-#             extra += abs(sq[i][j] + sq[ci][cj] - target) ** 2
-#     return base + extra
-
-# # ---------------------------------------------------------------------
-# # Genetic operators
-# # ---------------------------------------------------------------------
-
-# def pmx_crossover(p1: List[int], p2: List[int]) -> Tuple[List[int], List[int]]:
-#     n = len(p1)
-#     c1, c2 = [None] * n, [None] * n
-#     a, b = sorted(random.sample(range(n), 2))
-#     c1[a:b], c2[a:b] = p1[a:b], p2[a:b]
-
-#     def pmx_fill(child, parent):
-#         for i in range(a, b):
-#             if parent[i] not in child:
-#                 pos = i
-#                 val = parent[i]
-#                 while True:
-#                     val_in_parent = child[pos]
-#                     pos = parent.index(val_in_parent)
-#                     if child[pos] is None:
-#                         child[pos] = val
-#                         break
-
-#     pmx_fill(c1, p2)
-#     pmx_fill(c2, p1)
-#     for i in range(n):
-#         if c1[i] is None:
-#             c1[i] = p2[i]
-#         if c2[i] is None:
-#             c2[i] = p1[i]
-#     return c1, c2
-
-
-# def swap_mutation(p: List[int], rate: float):
-#     if random.random() < rate:
-#         i, j = random.sample(range(len(p)), 2)
-#         p[i], p[j] = p[j], p[i]
-
-# # ---------------------------------------------------------------------
-# # Main GA engine
-# # ---------------------------------------------------------------------
-
-# def run_ga(
-#     n: int,
-#     mode: str = "easy",
-#     pop_size: int = 400,
-#     max_gens: int = 200_000,
-#     elite_frac: float = 0.1,
-# ) -> Tuple[List[int], int]:
-#     if mode == "hard" and n % 4 != 0:
-#         raise ValueError("Most‑perfect squares only exist for n divisible by 4.")
-
-#     numbers = list(range(1, n * n + 1))
-#     fit_fn = fitness_standard if mode == "easy" else fitness_most_perfect
-
-#     # ------------------ population initialisation -------------------
-#     bias_cnt = int(0.2 * pop_size)
-#     population = biased_seeds(n, bias_cnt)
-#     population += [random.sample(numbers, len(numbers)) for _ in range(pop_size - bias_cnt)]
-
-#     # ------------------ GA loop -------------------
-#     best_perm, best_fit = None, math.inf
-#     elite_size = max(1, int(elite_frac * pop_size))
-#     mutation_rate = 0.35              # <-- adaptive knob starts high
-
-#     for gen in range(max_gens):
-#         fits = [fit_fn(ind, n) for ind in population]
-#         gen_best = min(range(pop_size), key=lambda i: fits[i])
-#         if fits[gen_best] < best_fit:
-#             best_fit = fits[gen_best]
-#             best_perm = population[gen_best][:]
-
-#         # --- early exit if perfect ---
-#         if best_fit == 0:
-#             return best_perm, gen
-
-#         # --------- adapt mutation rate ---------
-#         if best_fit <= 16 or best_fit < n:
-#             mutation_rate = 0.05
-
-#         # --------- elitism ---------
-#         elite_idx = sorted(range(pop_size), key=lambda i: fits[i])[:elite_size]
-#         new_pop = [population[i][:] for i in elite_idx]
-
-#         # --------- tournament selection ---------
-#         def tournament():
-#             k = 3
-#             cand = random.sample(range(pop_size), k)
-#             return population[min(cand, key=lambda i: fits[i])]  # copy-by-ref handled below
-
-#         while len(new_pop) < pop_size:
-#             parent1 = tournament()[:]
-#             parent2 = tournament()[:]
-#             child1, child2 = pmx_crossover(parent1, parent2)
-#             swap_mutation(child1, mutation_rate)
-#             swap_mutation(child2, mutation_rate)
-#             new_pop.extend([child1, child2])
-#         population = new_pop[:pop_size]
-
-#         # ------ random restart every 500 gens if still imperfect ------
-#         if gen and gen % 500 == 0 and best_fit > 0:
-#             for _ in range(int(0.2 * pop_size)):
-#                 idx = random.randrange(pop_size)
-#                 population[idx] = random.sample(numbers, len(numbers))
-
-#     return best_perm, max_gens
-
-# # ---------------------------------------------------------------------
-# # Small CLI for standalone use
-# # ---------------------------------------------------------------------
-
-# def print_square(perm: List[int], n: int):
-#     for row in chunks(perm, n):
-#         print(" ".join(f"{x:>3}" for x in row))
-
-
-# def main():
-#     print("Genetic Algorithm Magic Square Generator (adaptive edition)")
-#     mode = input("Choose difficulty ('easy' / 'hard'): ").strip().lower()
-#     if mode not in {"easy", "hard"}:
-#         print("Invalid choice – defaulting to easy.")
-#         mode = "easy"
-#     n = int(input("Enter square size N (integer): "))
-#     print("Running… this may take some time (especially for hard mode).")
-#     best, gen = run_ga(n, mode=mode)
-#     if best_fit := (fitness_standard if mode == "easy" else fitness_most_perfect)(best, n) == 0:
-#         print(f"\nSuccess! Found in {gen} generations:")
-#         print_square(best, n)
-#     else:
-#         print("\nFailed to reach a perfect square within the generation limit.")
-
-
-# if __name__ == "__main__":
-#     main()
-
-
+import argparse
 import random
-import math
-from typing import List, Tuple
+import time
+from dataclasses import dataclass
+from itertools import islice
+from typing import List
 
-"""
-Genetic Algorithm + Local Search for Magic Squares (v3)
-======================================================
-* Easy : ordinary magic squares (any n ≥ 3)
-* Hard : **most‑perfect** magic squares (n divisible by 4)
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 
-New in this version (2025‑05‑21)
---------------------------------
-1. **Greedy hill‑climb local search** – runs after GA (and optionally
-   inside) to finish off near‑perfect squares; for n = 4 hard it almost
-   always polishes fitness from ~30‑40 down to **0** in < 1 ms.
-2. **Perfect seed** – for hard mode we insert one *deterministically
-   constructed* most‑perfect square into the initial population, giving
-   the GA a guaranteed reachable optimum.
-3. Progress, adaptive mutation, random restarts unchanged.
-"""
+# ────────────────────────────────────────────────────────────────────────────────
+#  Hyper-parameter bundle
+# ────────────────────────────────────────────────────────────────────────────────
+@dataclass
+class GAConfig:
+    order: int = 3                    # magic-square size N
+    generations: int = 200            # maximal GA iterations
+    order: int = 3                      # magic-square size N
+    generations: int = 200              # number of GA iterations
+    pop_size: int = 100
+    elite_frac: float = 0.20
+    mut_rate: float = 0.45
+    stagnation_patience: int = 6
+    strong_mut_every: int = 50       # generations of stagnation before burst
+    strong_mut_every: int = 2           # generations of stagnation before strong mut.
+    strong_mut_rate: float = 0.90
+    strong_mut_count: int = 35
+    mode: str = "classic"          # classic | darwin | lamarck
+    perfect: bool = True           # True → most-perfect; False → ordinary
+    strong_mut_count: int = 5
+    mode: str = "classic"           # classic | darwin | lamarck
+    perfect: bool = True            # True → most-perfect; False → ordinary
+    plot: bool = True
 
-# ---------------------------------------------------------------------
-# Utility helpers
-# ---------------------------------------------------------------------
+# ────────────────────────────────────────────────────────────────────────────────
+# --------------------------------------------------------------------------- #
+#  Deterministic builders for *ordinary* magic squares
+# --------------------------------------------------------------------------- #
+def deterministic_magic(n: int) -> np.ndarray:
+    """Return an *ordinary* magic square of order n (n ≥ 3)."""
+    if n % 2 == 1:                                # --- odd -------------
+        m = np.zeros((n, n), dtype=int)
+        i, j = 0, n // 2
+        for k in range(1, n * n + 1):
+            m[i, j] = k
+            i2, j2 = (i - 1) % n, (j + 1) % n
+            if m[i2, j2]:
+                i = (i + 1) % n
+            else:
+                i, j = i2, j2
+        return m
 
-def magic_sum(n: int) -> int:
-    return n * (n * n + 1) // 2
+    elif n % 4 == 0:                                # --- doubly even -----
+        m = np.arange(1, n * n + 1).reshape(n, n)
+        mask = np.logical_xor(
+            np.indices((n, n))[0] % 4 // 2,
+            np.indices((n, n))[1] % 4 // 2,
+        )
+        m[mask] = n * n + 1 - m[mask]
+        return m
 
+    else:                                           # --- singly even -----
+        half = n // 2
+        sub = deterministic_magic(half)
+        m = np.block([[sub, sub + 2 * half**2],
+                      [sub + 3 * half**2, sub + half**2]])
 
-def chunks(lst: list, n: int) -> list:
-    return [lst[i : i + n] for i in range(0, len(lst), n)]
+        k = (n - 2) // 4
+        cols = list(range(k)) + list(range(n - k + 1, n))
+        extra = [k]
 
-
-def square_from_perm(perm: list, n: int) -> list:
-    return chunks(perm, n)
-
-# ---------------------------------------------------------------------
-# Deterministic most‑perfect constructor  (Ollerenshaw & Bree method)
-# ---------------------------------------------------------------------
-
-def most_perfect_construct(n: int) -> list:
-    """Return a flattened most‑perfect magic square for n multiple of 4."""
-    if n % 4:
-        raise ValueError("n must be divisible by 4 for most‑perfect squares")
-    square = [[0] * n for _ in range(n)]
-    for i in range(n):
-        for j in range(n):
-            # Formula from Ollerenshaw & Bree (1963)
-            square[i][j] = (
-                (i + j * 2) % n
-            ) * n + ((i + 2 * j) % n) + 1
-    return [x for row in square for x in row]
-
-# ---------------------------------------------------------------------
-# Deterministic constructors for biasing population
-# ---------------------------------------------------------------------
-
-def siamese_magic(n: int) -> list:
-    square = [[0] * n for _ in range(n)]
-    num, i, j = 1, 0, n // 2
-    while num <= n * n:
-        square[i][j] = num
-        num += 1
-        ni, nj = (i - 1) % n, (j + 1) % n
-        i, j = (i + 1, j) if square[ni][nj] else (ni, nj)
-    return [x for row in square for x in row]
-
-
-def strachey_magic(n: int) -> list:
-    m = [[i * n + j + 1 for j in range(n)] for i in range(n)]
-    for i in range(n):
-        for j in range(n):
-            if (i % 4 == j % 4) or ((i % 4) + (j % 4) == 3):
-                m[i][j] = n * n + 1 - m[i][j]
-    return [x for row in m for x in row]
-
-
-def biased_seeds(n: int, k: int, hard_mode: bool) -> list:
-    seeds = []
-    if hard_mode:
-        seeds.append(most_perfect_construct(n))  # perfect seed
-    base = (
-        siamese_magic(n)
-        if n % 2 == 1
-        else strachey_magic(n) if n % 4 == 0
-        else list(range(1, n * n + 1))
-    )
-    while len(seeds) < k:
-        perm = base[:]
-        for _ in range(n):
-            i, j = random.sample(range(len(perm)), 2)
-            perm[i], perm[j] = perm[j], perm[i]
-        seeds.append(perm)
-    return seeds
-
-# ---------------------------------------------------------------------
-# Fitness functions (unchanged)
-# ---------------------------------------------------------------------
-
-def fitness_standard(perm: list, n: int) -> int:
-    s = magic_sum(n)
-    sq = square_from_perm(perm, n)
-    err = 0
-    for i in range(n):
-        err += abs(sum(sq[i]) - s) ** 2
-        err += abs(sum(sq[j][i] for j in range(n)) - s) ** 2
-    err += abs(sum(sq[i][i] for i in range(n)) - s) ** 2
-    err += abs(sum(sq[i][n - 1 - i] for i in range(n)) - s) ** 2
-    return err
+        m[:, cols] = m[:, cols][[1, 0, 3, 2]]      # swap blocks A↔D, B↔C
+        m[:, extra] = m[:, extra][[3, 2, 1, 0]]     # special central col
+        return m
 
 
-def fitness_most_perfect(perm: list, n: int) -> int:
-    base = fitness_standard(perm, n)
-    sq = square_from_perm(perm, n)
-    s, extra = magic_sum(n), 0
-    for i in range(n - 1):
-        for j in range(n - 1):
-            extra += abs(sq[i][j] + sq[i][j + 1] + sq[i + 1][j] + sq[i + 1][j + 1] - s) ** 2
-    target = n * n + 1
-    for i in range(n):
-        for j in range(n):
-            ci, cj = n - 1 - i, n - 1 - j
-            extra += abs(sq[i][j] + sq[ci][cj] - target) ** 2
-    return base + extra
+# --------------------------------------------------------------------------- #
+#  Main GA implementation
+# ────────────────────────────────────────────────────────────────────────────────
+class MagicGA:
+    def __init__(self, cfg: GAConfig) -> None:
+        self.cfg = cfg
+        self.target = self.magic_constant(cfg.order)
+        # Fully random initial population for *all* tasks
+        self.population = [self._spawn_individual() for _ in range(cfg.pop_size)]
+        self._fig = None
 
-# ---------------------------------------------------------------------
-# Genetic operators (unchanged)
-# ---------------------------------------------------------------------
+    # ---------- Utility ---------------------------------------------------- #
+    @staticmethod
+    def magic_constant(n: int) -> int:
+        return n * (n**2 + 1) // 2
 
-# ---------------------------------------------------------------------
-# Crossover – switched to **Order Crossover (OX)** to avoid index errors
-# ---------------------------------------------------------------------
+    # ---------- Genetic operations ---------------------------------------- #
+    def _spawn_individual(self) -> list[int]:
+        seq = list(range(1, self.cfg.order ** 2 + 1))
+        random.shuffle(seq)
+        return seq
+    
+    def _adjust_mut_rate(self, best_fit: int) -> None:
+        hi, lo = 10, 2
+        if best_fit >= hi:
+            self.cfg.mut_rate = 0.85
+        else:
+            frac = max(0, (best_fit - lo) / (hi - lo))
+            self.cfg.mut_rate = 0.95
 
-def order_crossover(p1: list, p2: list) -> tuple:
-    """Return two children using the classic OX operator (permutation‑safe)."""
-    n = len(p1)
-    a, b = sorted(random.sample(range(n), 2))
-    def make_child(pa, pb):
-        child = [None] * n
-        child[a:b] = pa[a:b]
-        pb_idx = b
-        for i in list(range(b, n)) + list(range(0, b)):
-            while pb[pb_idx % n] in child:
-                pb_idx += 1
-            child[i] = pb[pb_idx % n]
-            pb_idx += 1
+    def evaluate(self, chrom: list[int]) -> int:
+        """Lower is better; 0 → valid magic square (ordinary or most-perfect)."""
+        n = self.cfg.order
+        board = np.asarray(chrom).reshape(n, n)
+        tgt = self.target
+
+        # Row / column / diagonal sums
+        score = int(np.abs(board.sum(1) - tgt).sum() +
+                     np.abs(board.sum(0) - tgt).sum() +
+                     abs(board.trace() - tgt) +
+                     abs(np.fliplr(board).trace() - tgt))
+        # Base score: row / col / main diag sums (required for *any* magic square)
+        score  = np.abs(board.sum(1) - tgt).sum()
+        score += np.abs(board.sum(0) - tgt).sum()
+        score += abs(board.trace() - tgt)
+        score += abs(np.fliplr(board).trace() - tgt)
+
+        # Extra constraints for *most-perfect* squares
+        if self.cfg.perfect:
+        # Extra constraints only for *perfect* squares
+            half = n // 2
+            r = np.arange(half)[:, None]
+            c = np.arange(n)
+            # Complementary pairs (horizontal + vertical)
+            score += int(np.abs(board[r, c] + board[-1 - r, -1 - c] - (n**2 + 1)).sum())
+            score += int(np.abs(board[r, -1 - c] + board[-1 - r,  c] - (n**2 + 1)).sum())
+            # 2×2 subsquares
+            # Check for property M (complementary pairs summing to n^2 + 1)
+            score += np.abs(board[r, c] + board[-1 - r, -1 - c] - (n**2 + 1)).sum()
+            score += np.abs(board[r, -1 - c] + board[-1 - r, c] - (n**2 + 1)).sum()
+
+            if n % 2 == 0:
+                # Check for 2x2 sub-square sums for doubly-even perfect squares
+                s = (board[:-1:2, :-1:2] + board[1::2, :-1:2] +
+                     board[:-1:2, 1::2] + board[1::2, 1::2])
+                score += int(np.abs(s - tgt).sum())
+        return score
+                     board[:-1:2, 1::2] + board[1::2, 1::2])
+                score += np.abs(s - tgt).sum()
+
+        return int(score)
+
+
+    def _tournament(self, k: int = 3) -> list[int]:
+        competitors = random.sample(self.population, k)
+        competitors.sort(key=self.evaluate)
+        return competitors[0]
+
+    def _breed(self, mum: list[int], dad: list[int]) -> list[int]:
+        n = self.cfg.order ** 2
+        child = [-1] * n
+        a, b = sorted(random.sample(range(n), 2))
+        child[a:b] = mum[a:b]
+        fill = (g for g in dad if g not in child)
+        child = [g if g != -1 else next(fill) for g in child]
         return child
-    return make_child(p1, p2), make_child(p2, p1)
 
+    def _jiggle(self, chrom: list[int], *, rate: float | None = None,
+                force: bool = False) -> list[int]:
+    def _jiggle(self, chrom: list[int],
+                 rate: float | None = None,
+                 force: bool = False) -> list[int]:
+        """Return mutated individual (in-place)."""
+        p = self.cfg.mut_rate if rate is None else rate
+        print(f"with p={p:.2f} ")
+        if random.random() > p and not force:
+            return chrom
 
-def swap_mutation(p: list, rate: float):
-    if random.random() < rate:
-        i, j = random.sample(range(len(p)), 2)
-        p[i], p[j] = p[j], p[i]
+        n_sq = self.cfg.order ** 2
+        action = random.choice(["swap", "reverse", "rotate", "shuffle"])
+        if action == "swap":
+            i, j = random.sample(range(n_sq), 2)
+            chrom[i], chrom[j] = chrom[j], chrom[i]
+        elif action == "reverse":
+            i, j = sorted(random.sample(range(n_sq), 2))
+            chrom[i:j] = reversed(chrom[i:j])
+        elif action == "rotate":
+            i, j = sorted(random.sample(range(n_sq), 2))
+            k = random.randint(1, self.cfg.order // 2)
+            seg = chrom[i:j]
+            chrom[i:j] = seg[-k:] + seg[:-k]
+        else:  # shuffle
+            i = random.randint(0, n_sq - self.cfg.order)
+            j = i + random.randint(self.cfg.order, n_sq // 2)
+            random.shuffle(chrom[i:j])
+        return chrom
 
-# ---------------------------------------------------------------------
-# Hill‑climb local search (new)
-# ---------------------------------------------------------------------
+    # ---------- Optional local search for Darwin/Lamarck ------------------ #
+    def _hill_climb(self, chrom: list[int]) -> list[int]:
+        n = self.cfg.order
+        board = np.asarray(chrom).reshape(n, n)
+        best = board.copy()
+        best_fit = self.evaluate(best.ravel().tolist())
+        for _ in range(n):
 
-def hill_climb(perm: list, n: int, fit_fn, max_iter: int = 10_000):
-    current = perm[:]
-    best_fit = fit_fn(current, n)
-    for _ in range(max_iter):
-        if best_fit == 0:
-            break
-        improved = False
-        # explore swaps greedily
-        for i in range(len(current) - 1):
-            for j in range(i + 1, len(current)):
-                current[i], current[j] = current[j], current[i]
-                f = fit_fn(current, n)
-                if f < best_fit:
-                    best_fit = f
-                    improved = True
-                    break  # accept first improvement
-                else:
-                    current[i], current[j] = current[j], current[i]
-            if improved:
+        # This hill climbing is specifically designed to swap elements
+        # within rows/cols to fix sum errors. It might be too aggressive
+        # or not general enough for ordinary squares if they don't have
+        # certain properties that make these swaps effective.
+        # For a general GA, simple random swaps or more complex local searches
+        # might be needed, or ensure the GA's own mutation is strong enough.
+        # For simplicity, we'll keep it as is, but be aware it's geared towards
+        # improving sums by local swaps.
+        for _ in range(n): # Iterate n times to try and improve
+            row_err = np.abs(best.sum(1) - self.target)
+            col_err = np.abs(best.sum(0) - self.target)
+            r1, r2 = row_err.argsort()[-2:]
+            c1, c2 = col_err.argsort()[-2:]
+            if (r1, c1) == (r2, c2):
+                continue
+            test = best.copy()
+            test[r1, c1], test[r2, c2] = test[r2, c2], test[r1, c1]
+            f = self.evaluate(test.ravel().tolist())
+            if f < best_fit:
+                best, best_fit = test, f
+
+            # Find the two rows/cols with largest errors
+            # We take the top two, ensuring we don't pick the same index twice if n=1
+            r_indices = row_err.argsort()
+            c_indices = col_err.argsort()
+
+            # Attempt swaps between cells in rows/cols with high errors
+            # This is a heuristic; more sophisticated hill climbing would explore more neighbors.
+            improved_this_iteration = False
+            for r1_idx in r_indices[::-1]: # Iterate from highest error rows
+                for r2_idx in r_indices[::-1]:
+                    if r1_idx == r2_idx: continue
+                    for c1_idx in c_indices[::-1]: # Iterate from highest error cols
+                        for c2_idx in c_indices[::-1]:
+                            if c1_idx == c2_idx: continue
+
+                            test = best.copy()
+                            # Swap elements at (r1, c1) and (r2, c2)
+                            test[r1_idx, c1_idx], test[r2_idx, c2_idx] = test[r2_idx, c2_idx], test[r1_idx, c1_idx]
+                            f = self.evaluate(test.ravel().tolist())
+                            if f < best_fit:
+                                best, best_fit = test, f
+                                improved_this_iteration = True
+                                # If an improvement is found, restart search for this iteration
+                                # or simply break and let the next iteration try again
+                                break
+                        if improved_this_iteration: break
+                    if improved_this_iteration: break
+                if improved_this_iteration: break
+            if not improved_this_iteration and _ > 0: # If no improvement in an iteration, can break early
                 break
-        if not improved:
+
+        return best.ravel().tolist()
+
+
+    # ---------- Visual ---------------------------------------------------- #
+    def _show(self, chrom: list[int], gen: int) -> None:
+        if not self.cfg.plot:
+            return
+        if self._fig is None:
+            self._fig = plt.figure(figsize=(6, 6))
+        plt.clf()
+        n = self.cfg.order
+        board = np.asarray(chrom).reshape(n, n)
+        norm = board.astype(float) / (n * n)
+        colours = plt.cm.YlGnBu(norm)
+        tbl = plt.table(cellText=board, cellColours=colours, cellLoc="center",
+                        loc="center", colWidths=[0.12] * n)
+        tbl.auto_set_font_size(False)
+        tbl.set_fontsize(12)
+        plt.title(f"Generation {gen} | Fitness {self.evaluate(chrom)}") # Evaluate with current cfg
+        plt.axis("off")
+        plt.pause(0.001)
+
+    # ---------- Evolution loop ------------------------------------------- #
+    def run(self) -> list[int]:
+        cfg = self.cfg
+        patience_ctr = 0
+        strong_ctr = 0
+        best_fit_hist: List[int] = []
+
+        # Removed the deterministic early exit. The GA will now always run.
+
+        for g in range(cfg.generations):
+            print(f"mutation rate: {cfg.mut_rate:.2f} | ")
+            # Optional local search
+            if cfg.mode in ("darwin", "lamarck"):
+                refined_pop = []
+            # optional local search
+            if cfg.mode in ("darwin", "lamarck"): # Only these modes use hill_climb
+                new_pop = []
+                for indiv in self.population:
+                    refined = self._hill_climb(indiv)
+                    refined_pop.append(refined if cfg.mode == "lamarck" else indiv)
+                self.population = refined_pop
+                    if cfg.mode == "lamarck":
+                        new_pop.append(refined)
+                    else:
+                        new_pop.append(indiv)
+                self.population = new_pop
+
+            # Sort by fitness, record best
+            self.population.sort(key=self.evaluate)
+            best = self.population[0]
+            best_fit = self.evaluate(best)
+            self._adjust_mut_rate(best_fit)
+            best_fit_hist.append(best_fit)
+            self._show(best, g)
+
+            if best_fit == 0:
+                print(f"✨ Solution found in {g} generations (fitness 0)")
+                # This message is now more general, as it applies to both
+                # ordinary (if perfect=False) and perfect (if perfect=True) squares.
+                square_type = "Most-perfect" if cfg.perfect else "Ordinary"
+                print(f"✨ {square_type} square found in {g} generations")
+                break
+
+            # Stagnation detection
+            if len(best_fit_hist) > cfg.stagnation_patience and \
+               all(b == best_fit for b in best_fit_hist[-cfg.stagnation_patience:]):
+                patience_ctr += 1
+                strong_ctr += 1
+            else:
+                patience_ctr = strong_ctr = 0
+
+            # Elitism copy
+            elite_cut = int(cfg.elite_frac * cfg.pop_size)
+            next_gen = self.population[:elite_cut]
+
+            # Strong mutation burst
+            if strong_ctr >= cfg.strong_mut_every:
+                for _ in range(cfg.strong_mut_count):
+                    mutant = best.copy()
+                    self._jiggle(mutant, rate=cfg.strong_mut_rate, force=True)
+                    if cfg.mode == "lamarck":
+                        mutant = self._hill_climb(mutant)
+                    next_gen.append(mutant)
+                strong_ctr = 0
+
+            # Standard reproduction
+            while len(next_gen) < cfg.pop_size:
+                mum = self._tournament()
+                dad = self._tournament()
+                child = self._breed(mum, dad)
+                self._jiggle(child)
+                next_gen.append(child)
+
+            self.population = next_gen
+
+        if cfg.plot:
+            plt.show()
+        return best
+
+    # ------------------------------------------------------------------- #
+    # Static helpers: benchmarking & CSV logs
+    # ------------------------------------------------------------------- #
+    @staticmethod
+    def benchmark(ns: list[int], cfg: GAConfig, runs: int = 5) -> pd.DataFrame:
+        rows = []
+        # Define the modes to benchmark, including a specific entry for ordinary GA
+        benchmark_modes = [
+            ("classic", False), # Ordinary magic square using GA
+            ("classic", True),  # Perfect magic square using classic GA
+            ("darwin", True),
+            ("lamarck", True),
+        ]
+
+        for n in ns:
+            for mode, perfect_setting in benchmark_modes:
+                times, finals = [], []
+                cfg_n = cfg | GAConfig(order=n, mode=mode, plot=False, perfect=perfect_setting) # type: ignore
+                for _ in range(runs):
+                    start = time.perf_counter()
+                    best = MagicGA(cfg_n).run()
+                    times.append(time.perf_counter() - start)
+                    finals.append(MagicGA(cfg_n).evaluate(best)) # Evaluate with the correct perfect setting
+                rows.append(dict(N=n,
+                                  Mode=f"{mode} (Perfect={perfect_setting})", # Add perfect setting to mode label
+                                  AvgTime=np.mean(times),
+                                  StdTime=np.std(times),
+                                  AvgFitness=np.mean(finals),
+                                  StdFitness=np.std(finals)))
+        df = pd.DataFrame(rows)
+        df.to_csv("ga_magic_benchmark.csv", index=False)
+        return df
+
+# ────────────────────────────────────────────────────────────────────────────────
+#  CLI wrapper
+# ────────────────────────────────────────────────────────────────────────────────
+def parse_args() -> GAConfig:
+    p = argparse.ArgumentParser(description="Genetic magic-square solver (random init)")
+    p.add_argument("--n", type=int, default=3, help="square size (≥3)")
+    p.add_argument("--gens", type=int, default=200, help="number of generations")
+    p.add_argument("--mode", choices=["classic", "darwin", "lamarck"], default="classic")
+    p.add_argument("--mode", choices=["classic", "darwin", "lamarck"],
+                     default="classic",
+                     help="evolution variant")
+    p.add_argument("--pop", type=int, default=100, help="population size")
+    p.add_argument("--perfect", action="store_true", help="solve most-perfect variant")
+    p.add_argument("--no-plot", action="store_true", help="disable live plot")
+    p.add_argument("--ordinary", action="store_true",
+                     help="Solve for ordinary magic square (disables perfect constraints)")
+    args = p.parse_args()
+    return GAConfig(order=args.n, generations=args.gens, pop_size=args.pop,
+                    mode=args.mode, perfect=args.perfect, plot=not args.no_plot)
+
+    # Determine perfect setting based on --ordinary flag
+    perfect_setting = not args.ordinary
+
+    return GAConfig(order=args.n,
+                     generations=args.gens,
+                     pop_size=args.pop,
+                     mode=args.mode,
+                     perfect=perfect_setting,
+                     plot=not args.no_plot)
+
+
+def main() -> None:
+    cfg = parse_args()
+    result = MagicGA(cfg).run()
+    print("\nBest board (fitness =", MagicGA(cfg).evaluate(result), "):")
+    print(np.asarray(result).reshape(cfg.order, cfg.order))
+
+# ────────────────────────────────────────────────────────────────────────────────
+#  Interactive text-menu front-end
+# ────────────────────────────────────────────────────────────────────────────────
+def interactive_menu() -> None:
+    MODE_LABELS = {
+        "1": ("classic", False),   # ordinary magic square (GA)
+        "2": ("classic", True),    # most-perfect, classic GA
+        "3": ("darwin",  True),    # most-perfect, Darwinian
+        "4": ("lamarck", True),    # most-perfect, Lamarckian
+    }
+        "1": ("classic", False), # Ordinary magic square (GA)
+        "2": ("classic", True),  # Perfect magic square (classic GA)
+        "3": ("darwin",  True),  # Darwinian GA (perfect)
+        "4": ("lamarck", True),  # Lamarckian GA (perfect)
+    }
+
+    while True:
+        print("""
+╔════════════════════════════════════════╗
+║           MAGIC-SQUARE  SOLVER         ║
+╠════════════════════════════════════════╣
+║ 1) Ordinary magic square  (GA)         ║
+║ 2) Perfect magic square  (classic)     ║
+║ 3) Perfect magic square  (darwinian)   ║
+║ 4) Perfect magic square  (lamarckian)  ║
+║ 5) Benchmark all modes                 ║
+║ 6) Exit                                ║
+╚════════════════════════════════════════╝""")
+        print("\n╔════════════════════════════════════════╗")
+        print("║  MAGIC-SQUARE  SOLVER                  ║")
+        print("╠════════════════════════════════════════╣")
+        print("║ 1) Ordinary magic square (using GA)    ║") # Updated label
+        print("║ 2) Perfect magic square (classic GA)   ║")
+        print("║ 3) Darwinian GA (perfect)              ║")
+        print("║ 4) Lamarckian GA (perfect)             ║")
+        print("║ 5) Benchmark all modes                 ║")
+        print("║ 6) Exit                                ║")
+        print("╚════════════════════════════════════════╝")
+        choice = input("Select option → ").strip()
+
+        # ------ run a GA variant ------------------------------------- #
+        if choice in MODE_LABELS:
+            try:
+                n = int(input(" Square order N (≥3)        : "))
+                gens = int(input(" Generations                : "))
+                pop = int(input(" Population size [100]      : ") or "100")
+                plot = input(" Show live plot? [y]/n      : ").lower().strip() != "n"
+                algo, perfect = MODE_LABELS[choice]
+                cfg = GAConfig(order=n, generations=gens, pop_size=pop,
+                                mode=algo, perfect=perfect, plot=plot)
+                n = int(input(" Square order N (≥3)          : "))
+                gens = int(input(" Generations                    : "))
+                pop = int(input(" Population size [100]        : ") or "100")
+                plot = input(" Show live plot? [y]/n        : ").lower().strip() != "n"
+
+                if n < 3:
+                    print("❌ Order N must be ≥ 3 for magic squares.")
+                    continue
+
+                algo, perfect_setting = MODE_LABELS[choice]
+                cfg = GAConfig(order=n,
+                                generations=gens,
+                                pop_size=pop,
+                                mode=algo,
+                                perfect=perfect_setting,
+                                plot=plot)
+                start = time.perf_counter()
+                result = MagicGA(cfg).run()
+                elapsed = time.perf_counter() - start
+                print(f"\nFinished in {elapsed:.2f}s – final fitness:",
+                      MagicGA(cfg).evaluate(result)) # Evaluate with the correct perfect setting
+                print(np.asarray(result).reshape(n, n))
+            except ValueError:
+                print("❌  Please enter integers only.")
+            continue
+
+        # ------ benchmark -------------------------------------------- #
+        elif choice == "5":
+            try:
+                ns = [int(x) for x in input(" N list (e.g. 3,4,5)        : ")
+                                         .replace(" ", "")
+                                         .split(",") if x]
+                gens = int(input(" Generations per run          : "))
+                runs = int(input(" Runs per variant [5]         : ") or "5")
+                # For benchmarking, we now explicitly create configs for both
+                # ordinary and perfect variants for each GA mode.
+                # The benchmark function has been updated to reflect this.
+                cfg = GAConfig(generations=gens, plot=False) # Base config for benchmark
+                df = MagicGA.benchmark(ns, cfg, runs=runs)
+                print("\nBenchmark complete – results saved to 'ga_magic_benchmark.csv'\n")
+                print(df.to_string(index=False))
+            except ValueError:
+                print("❌  Invalid numeric input.")
+            continue
+
+        # ------ quit -------------------------------------------------- #
+        elif choice == "6":
+            print("👋  Goodbye!")
             break
-    return current, best_fit
-
-# ---------------------------------------------------------------------
-# Main GA engine (progress‑aware + local search)
-# ---------------------------------------------------------------------
-
-def run_ga(
-    n: int,
-    mode: str = "easy",
-    pop_size: int = 400,
-    max_gens: int = 200_000,
-    elite_frac: float = 0.1,
-    progress_interval: int = 1_000,
-) -> Tuple[List[int], int]:
-    """Run GA and print progress every `progress_interval` generations."""
-    if mode == "hard" and n % 4 != 0:
-        raise ValueError("Most‑perfect squares only exist for n divisible by 4.")
-
-    numbers = list(range(1, n * n + 1))
-    fit_fn = fitness_standard if mode == "easy" else fitness_most_perfect
-
-    # ------------------ population initialisation -------------------
-    bias_cnt = int(0.2 * pop_size)
-    population = biased_seeds(n, bias_cnt)
-    population += [random.sample(numbers, len(numbers)) for _ in range(pop_size - bias_cnt)]
-
-    best_perm, best_fit = None, math.inf
-    elite_size = max(1, int(elite_frac * pop_size))
-    mutation_rate = 0.35
-
-    for gen in range(max_gens):
-        fits = [fit_fn(ind, n) for ind in population]
-        gen_best = min(range(pop_size), key=lambda i: fits[i])
-        if fits[gen_best] < best_fit:
-            best_fit = fits[gen_best]
-            best_perm = population[gen_best][:]
-
-        # ---- progress print ----
-        if gen % progress_interval == 0:
-            print(f"Gen {gen:>6} | best fitness = {best_fit}")
-
-        if best_fit == 0:
-            return best_perm, gen
-
-        if best_fit <= 16 or best_fit < n:
-            mutation_rate = 0.05
-
-        elite_idx = sorted(range(pop_size), key=lambda i: fits[i])[:elite_size]
-        new_pop = [population[i][:] for i in elite_idx]
-
-        def tournament():
-            k = 3
-            cand = random.sample(range(pop_size), k)
-            return population[min(cand, key=lambda i: fits[i])]
-
-        while len(new_pop) < pop_size:
-            parent1 = tournament()[:]
-            parent2 = tournament()[:]
-            child1, child2 = pmx_crossover(parent1, parent2)
-            swap_mutation(child1, mutation_rate)
-            swap_mutation(child2, mutation_rate)
-            new_pop.extend([child1, child2])
-        population = new_pop[:pop_size]
-
-        if gen and gen % 500 == 0 and best_fit > 0:
-            for _ in range(int(0.2 * pop_size)):
-                population[random.randrange(pop_size)] = random.sample(numbers, len(numbers))
-
-    print("Reached generation limit – returning best found so far…")
-    return best_perm, max_gens, best_fit
-
-# ---------------------------------------------------------------------
-# CLI (unchanged except success check)
-# ---------------------------------------------------------------------
-
-def print_square(perm: list, n: int):
-    for row in chunks(perm, n):
-        print(" ".join(f"{x:>3}" for x in row))
-
-
-def main():
-    print("Genetic Algorithm Magic Square Generator (GA + hill‑climb)")
-    mode = input("Choose difficulty ('easy' / 'hard'): ").strip().lower()
-    if mode not in {"easy", "hard"}:
-        print("Invalid choice – defaulting to easy.")
-        mode = "easy"
-    try:
-        n = int(input("Enter square size N (integer): "))
-        if n < 3:
-            raise ValueError
-    except ValueError:
-        print("Invalid N – using N = 4.")
-        n = 4
-    print("Running… progress every 1 000 gens.")
-
-    best, gen, fitness = run_ga(n, mode=mode)
-
-    print("=== Result ===")
-    print(f"Best fitness: {fitness}  (0 means perfect)")
-    print(f"Found at generation: {gen}")
-    print_square(best, n)
-
+        else:
+            print("❓  Unknown option – please try again.")
 
 if __name__ == "__main__":
-    main()
+    interactive_menu()
