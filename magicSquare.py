@@ -46,10 +46,13 @@ class MagicGA:
         self.population = [self._spawn() for _ in range(cfg.pop_size)]
         self.eval_calls = 0
         self.history: List[int] = []
+        self.avg_history: List[float] = []
 
         # Initialize plotting variables
         self._fig = None
         self._ax = None
+        self._fitness_fig = None 
+        self._fitness_ax = None
 
     def _spawn(self) -> List[int]:
         seq = list(range(1, self.cfg.order ** 2 + 1))
@@ -292,11 +295,13 @@ class MagicGA:
         from matplotlib.colors import LinearSegmentedColormap
         bright_cmap = LinearSegmentedColormap.from_list("bright", ["#fffae5", "#ffd07a", "#ffad33", "#ff8800"])
 
+        # Create figure with subplots if not exists
         if self._fig is None:
-            self._fig, self._ax = plt.subplots(figsize=(n, n))
+            self._fig, (self._ax, self._fitness_ax) = plt.subplots(1, 2, figsize=(15, 6))
+            
         self._ax.clear()
 
-        # Draw cells with colored background
+        # Draw magic square (your existing code)
         for i in range(n):
             for j in range(n):
                 color = bright_cmap(norm[i, j])
@@ -308,8 +313,29 @@ class MagicGA:
         self._ax.set_ylim(0, n)
         self._ax.set_aspect("equal")
         self._ax.axis("off")
-
         self._ax.set_title(f"Generation {gen} | Fitness {self.evaluate(chrom)}", fontsize=14)
+
+        # Plot fitness curves
+        self._fitness_ax.clear()
+        if len(self.history) > 0:
+            self._fitness_ax.plot(range(len(self.history)), self.history, 
+                                label='Best Fitness', color='blue', linewidth=2)
+        if len(self.avg_history) > 0:
+            self._fitness_ax.plot(range(len(self.avg_history)), self.avg_history, 
+                                label='Average Fitness', color='red', linewidth=2, alpha=0.7)
+        
+        self._fitness_ax.set_xlabel('Generation')
+        self._fitness_ax.set_ylabel('Fitness (lower is better)')
+        self._fitness_ax.set_title('Fitness Evolution')
+        self._fitness_ax.legend()
+        self._fitness_ax.grid(True, alpha=0.3)
+        
+        # Set y-axis to start from 0 for better visualization
+        if len(self.history) > 0 or len(self.avg_history) > 0:
+            max_fit = max(max(self.history) if self.history else 0, 
+                        max(self.avg_history) if self.avg_history else 0)
+            self._fitness_ax.set_ylim(0, max_fit * 1.1)
+
         plt.tight_layout()
         plt.pause(0.001)
 
@@ -318,14 +344,29 @@ class MagicGA:
         burst = 0
         optim_func = self._hill if cfg.optimization == "hill" else (
             self._monte_carlo if cfg.optimization == "mc" else self._tabu_search)
+        
         for gen in range(cfg.generations):
             if cfg.mode in ("darwin", "lamarck"):
                 self.population = [optim_func(ind) if cfg.mode == "lamarck" else ind for ind in self.population]
-            self.population.sort(key=self.evaluate)
+            
+            # Calculate fitness for all individuals ONCE
+            fitness_scores = [self.evaluate(ind) for ind in self.population]
+            
+            # Sort population based on pre-calculated fitness
+            sorted_pairs = sorted(zip(self.population, fitness_scores), key=lambda x: x[1])
+            self.population = [ind for ind, _ in sorted_pairs]
+            fitness_scores = [fit for _, fit in sorted_pairs]
+            
             best = self.population[0]
-            best_fit = self.evaluate(best)
+            best_fit = fitness_scores[0]
+            
+            # Calculate average fitness from pre-calculated scores
+            avg_fit = sum(fitness_scores) / len(fitness_scores)
+            
             self._adjust_mut_rate(best_fit)
             self.history.append(best_fit)
+            self.avg_history.append(avg_fit)  # Add this line
+            
             if cfg.plot:
                 self._show(best, gen)
             if best_fit == 0:
@@ -349,7 +390,6 @@ class MagicGA:
                 next_gen.append(child)
             self.population = next_gen
         return self.population[0], None
-
 
 # Experiment runner
 def experiment(order: int, mode: str, generations: int, runs: int, perfect: bool = False, optimization: str = "hill") -> Dict[str, List]:
