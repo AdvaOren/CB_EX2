@@ -47,6 +47,10 @@ class MagicGA:
         self.eval_calls = 0
         self.history: List[int] = []
 
+        # Initialize plotting variables
+        self._fig = None
+        self._ax = None
+
     def _spawn(self) -> List[int]:
         seq = list(range(1, self.cfg.order ** 2 + 1))
         random.shuffle(seq)
@@ -274,6 +278,40 @@ class MagicGA:
 
         return best
 
+    def _show(self, chrom: list[int], gen: int) -> None:
+        if not self.cfg.plot:
+            return
+
+        n = self.cfg.order
+        board = np.asarray(chrom).reshape(n, n)
+
+        # Normalize values between 0 and 1 for colormap
+        norm = board.astype(float) / (n * n)
+
+        # Custom brighter colormap (avoiding dark colors)
+        from matplotlib.colors import LinearSegmentedColormap
+        bright_cmap = LinearSegmentedColormap.from_list("bright", ["#fffae5", "#ffd07a", "#ffad33", "#ff8800"])
+
+        if self._fig is None:
+            self._fig, self._ax = plt.subplots(figsize=(n, n))
+        self._ax.clear()
+
+        # Draw cells with colored background
+        for i in range(n):
+            for j in range(n):
+                color = bright_cmap(norm[i, j])
+                self._ax.add_patch(plt.Rectangle((j, n - 1 - i), 1, 1, color=color, ec="black", lw=1.5))
+                self._ax.text(j + 0.5, n - 1 - i + 0.5, str(board[i, j]),
+                            va="center", ha="center", fontsize=16, weight="bold", color="black")
+
+        self._ax.set_xlim(0, n)
+        self._ax.set_ylim(0, n)
+        self._ax.set_aspect("equal")
+        self._ax.axis("off")
+
+        self._ax.set_title(f"Generation {gen} | Fitness {self.evaluate(chrom)}", fontsize=14)
+        plt.tight_layout()
+        plt.pause(0.001)
 
     def run(self) -> Tuple[List[int], int | None]:
         cfg = self.cfg
@@ -288,6 +326,8 @@ class MagicGA:
             best_fit = self.evaluate(best)
             self._adjust_mut_rate(best_fit)
             self.history.append(best_fit)
+            if cfg.plot:
+                self._show(best, gen)
             if best_fit == 0:
                 return best, gen
             if len(self.history) > cfg.stagnation_patience and all(f == best_fit for f in self.history[-cfg.stagnation_patience:]):
@@ -406,7 +446,7 @@ def benchmark_wizard() -> None:
                 best_fit = min(finals)
                 avg_fit = sum(finals) / len(finals)
                 summary_rows.append({
-                    "N": n, "Mode": mode, "SuccessRate": success_rate,
+                    "N": n, "Mode": mode, "SuccessRate": success_rate, "Algorithm": optimization.upper(),
                     "Perfect": perfect,
                     "AvgGenSolve": avg_gen_solve, "AvgCallsSolve": avg_calls_solve,
                     "AvgCalls": avg_calls_all, "BestFit": best_fit, "AvgFit": avg_fit
@@ -428,8 +468,8 @@ def benchmark_wizard() -> None:
             best_row = slice_n.loc[slice_n.BestFit.idxmin()]
             interesting = pd.concat([interesting, best_row.to_frame().T], ignore_index=True)
     interesting = interesting.drop_duplicates().reset_index(drop=True)
-    print("\n===== Interesting Results =====")
-    print(interesting.to_string(index=False, formatters={
+    print("\n====== Complete Results ======")
+    print(df.to_string(index=False, formatters={
         "SuccessRate": lambda x: f"{x:.0f}%",
         "AvgGenSolve": lambda x: f"{int(x)}" if pd.notna(x) else "–",
         "AvgCallsSolve": lambda x: f"{int(x)}" if pd.notna(x) else "–",
